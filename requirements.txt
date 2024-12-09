@@ -1,5 +1,5 @@
 #PyYAML
-#requests
+requests
 attrs
 #tqdm        # progress bar
 joblib
@@ -15,5 +15,6 @@ plotly
 #markdown
 #svglib
 #funpy @ git+https://github.com/GeoMop/funpy@main
+xlrd >= 2.0.1
 pysolar     # just sun positions
 pvlib       # complex PV library

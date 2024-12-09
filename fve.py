@@ -4,8 +4,9 @@ import numpy as np
 import seaborn as sns
 import math
 from datetime import datetime, timedelta
-from pysolar.solar import get_azimuth, get_altitude
-import pvlib
+#from pysolar.solar import get_azimuth, get_altitude
+from pvlib_model import *
+from spot import *
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -42,7 +43,7 @@ def compute_sun_normal_angle_with_pvlib(df, lat, lon, panel_azimuth, panel_incli
     normal_vector = np.array([normal_x, normal_y, normal_z])
 
     # Calculate solar position using pvlib
-    solar_pos = pvlib.solarposition.get_solarposition(
+    solar_pos = solarposition.get_solarposition(
         time=pd.to_datetime(df['time'], format='%d.%m. %H:%M'),
         latitude=lat,
         longitude=lon
@@ -83,16 +84,20 @@ def read_csv_to_dataframe(file_path):
     try:
         # Read the CSV file into a Pandas DataFrame
         df = pd.read_csv(file_path, delimiter=";", skiprows=1, header=0, dtype='str', encoding="utf-8")
+        units = df.iloc[0]  # Extract units from the first row
         df = df.iloc[17:]  # Start data from the 20th row (index=19 in the original file)
         df.reset_index(drop=True, inplace=True)  # Reset index after slicing
         print(f"Data successfully loaded. Shape: {df.shape}")
-        return df
+
+        # read units
+
+        return df, units
     except Exception as e:
         print(f"An error occurred while reading the file: {e}")
         return None
 
 
-def create_shortcuts_and_rename(df):
+def create_shortcuts_and_rename(df, units):
     """
     Creates shortcuts for all provided column names and renames the DataFrame accordingly.
 
@@ -106,8 +111,8 @@ def create_shortcuts_and_rename(df):
     # Dictionary for all columns with shortcuts
     shortcuts = {
         "time": "Doba",
-        "irr_horiz": "Intenzita záření na horizontálu",
-        "irr_diff": "Difúzní záření na vodorovné rovině",
+        "GHI": "Intenzita záření na horizontálu",
+        "DHI": "Difúzní záření na vodorovné rovině",
         "temp_out": "Venkovní teplota",
         "sun_alt_w": "Budovy 02-Oblast modulu Západ: Výška slunce",
         "irr_tilt_w": "Budovy 02-Oblast modulu Západ: Intenzita záření na skloněnou plochu",
@@ -115,11 +120,29 @@ def create_shortcuts_and_rename(df):
         "sun_alt_e": "Budovy 02-Oblast modulu Východ: Výška slunce",
         "irr_tilt_e": "Budovy 02-Oblast modulu Východ: Intenzita záření na skloněnou plochu",
         "temp_mod_e": "Budovy 02-Oblast modulu Východ: Teplota modulu",
-        "ac_current": "Proud (AC) Střídač 1 (GoodWe Technologies Co.,Ltd. GW15K-ET)",
-        "voc_1": "Napětí naprázdno (MPP 1, Střídač 1 (GoodWe Technologies Co.,Ltd. GW15K-ET))",
-        "vmp_1": "Napětí MPP (MPP 1, Střídač 1 (GoodWe Technologies Co.,Ltd. GW15K-ET))",
-        "voc_2": "Napětí naprázdno (MPP 2, Střídač 1 (GoodWe Technologies Co.,Ltd. GW15K-ET))",
-        "vmp_2": "Napětí MPP (MPP 2, Střídač 1 (GoodWe Technologies Co.,Ltd. GW15K-ET))",
+        "irr_eff_w": "Budovy 02-Oblast modulu Západ: Globální záření na modul",
+        "irr_eff_e": "Budovy 02-Oblast modulu Východ: Globální záření na modul",
+
+        "irr_global_horiz_w": "Budovy 02-Oblast modulu Západ: Globální záření - horizontální",
+        "spec_loss_w": "Budovy 02-Oblast modulu Západ: Ztráty kvůli Odchylka od standardního spektra",
+        "albedo_loss_w": "Budovy 02-Oblast modulu Západ: Ztráty kvůli Odraz od země (Albedo)",
+        "module_yield_w": "Budovy 02-Oblast modulu Západ: Výnosy Vyrovnání a sklon úrovně modulu",
+        "shade_loss_w": "Budovy 02-Oblast modulu Západ: Ztráty kvůli Odstínění, zaclonění",
+        "module_refl_w": "Budovy 02-Oblast modulu Západ: Odraz na povrchu modulu",
+        "irr_back_w": "Budovy 02-Oblast modulu Západ: Intenzita záření na zadní části modulu",
+
+        "irr_global_horiz_e": "Budovy 02-Oblast modulu Východ: Globální záření - horizontální",
+        "spec_loss_e": "Budovy 02-Oblast modulu Východ: Ztráty kvůli Odchylka od standardního spektra",
+        "albedo_loss_e": "Budovy 02-Oblast modulu Východ: Ztráty kvůli Odraz od země (Albedo)",
+        "module_yield_e": "Budovy 02-Oblast modulu Východ: Výnosy Vyrovnání a sklon úrovně modulu",
+        "shade_loss_e": "Budovy 02-Oblast modulu Východ: Ztráty kvůli Odstínění, zaclonění",
+        "module_refl_e": "Budovy 02-Oblast modulu Východ: Odraz na povrchu modulu",
+        "irr_back_e": "Budovy 02-Oblast modulu Východ: Intenzita záření na zadní části modulu",
+
+        "pv_energy_DC": "Střídač 1 do  Budovy 02-Oblast modulu Východ & Budovy 02-Oblast modulu Západ: Energie na vstupu měniče",
+        "pv_net_energy": "Dodávky energie do sítě",  # Skutečná produkce FV, zráty převodu DC/AC, kabelů
+
+        # %Rízené toky energie
         "grid_supply": "Dodávka do sítě",
         "grid_energy": "Energie ze sítě",
         "consumption": "Spotřeba",
@@ -128,6 +151,7 @@ def create_shortcuts_and_rename(df):
         "charge_loss": "Ztráty nabíjením/vybíjením",
         "battery_soc": "Stav nabití baterií (ve vztahu k C10)",
         "load_cycle": "Cyklické zatížení",
+
         "irr_global_horiz": "Globální záření - horizontální",
         "spectrum_dev": "Odchylka od standardního spektra",
         "albedo": "Odraz od země (Albedo)",
@@ -136,22 +160,6 @@ def create_shortcuts_and_rename(df):
         "module_refl": "Odraz na povrchu modulu",
         "irr_back": "Intenzita záření na zadní části modulu",
         "irr_global_mod": "Globální záření na modul",
-        "irr_global_horiz_w": "Budovy 02-Oblast modulu Západ: Globální záření - horizontální",
-        "spec_loss_w": "Budovy 02-Oblast modulu Západ: Ztráty kvůli Odchylka od standardního spektra",
-        "albedo_loss_w": "Budovy 02-Oblast modulu Západ: Ztráty kvůli Odraz od země (Albedo)",
-        "module_yield_w": "Budovy 02-Oblast modulu Západ: Výnosy Vyrovnání a sklon úrovně modulu",
-        "shade_loss_w": "Budovy 02-Oblast modulu Západ: Ztráty kvůli Odstínění, zaclonění",
-        "module_refl_w": "Budovy 02-Oblast modulu Západ: Odraz na povrchu modulu",
-        "irr_back_w": "Budovy 02-Oblast modulu Západ: Intenzita záření na zadní části modulu",
-        "irr_global_mod_w": "Budovy 02-Oblast modulu Západ: Globální záření na modul",
-        "irr_global_horiz_e": "Budovy 02-Oblast modulu Východ: Globální záření - horizontální",
-        "spec_loss_e": "Budovy 02-Oblast modulu Východ: Ztráty kvůli Odchylka od standardního spektra",
-        "albedo_loss_e": "Budovy 02-Oblast modulu Východ: Ztráty kvůli Odraz od země (Albedo)",
-        "module_yield_e": "Budovy 02-Oblast modulu Východ: Výnosy Vyrovnání a sklon úrovně modulu",
-        "shade_loss_e": "Budovy 02-Oblast modulu Východ: Ztráty kvůli Odstínění, zaclonění",
-        "module_refl_e": "Budovy 02-Oblast modulu Východ: Odraz na povrchu modulu",
-        "irr_back_e": "Budovy 02-Oblast modulu Východ: Intenzita záření na zadní části modulu",
-        "irr_global_mod_e": "Budovy 02-Oblast modulu Východ: Globální záření na modul",
         "irr_global_pv": "FV globální záření",
         "bifaciality": "Bifacilita (Oboustrannost)",
         "soiling": "Znečistění",
@@ -172,11 +180,11 @@ def create_shortcuts_and_rename(df):
         "mpp_ac_power_loss": "Sestupná regulace z důvodu max. AC výkonu/cos phi",
         "mpp_adj_loss": "Přizpůsobení MPP",
         "pv_ac_energy": "FV energie (AC)",
-        "grid_feed": "Dodávky energie do sítě",
         "converter_loss": "Ztráty kvůli Převod DC/AC",
         "cable_loss": "Ztráty v kabelech celkem",
         "standby_loss": "Vlastní spotřeba (pohotovostní režim nebo noc)",
     }
+
     # explicitely convert columns from 1 to float
     for c in df.columns[1:]:
         df[c] = pd.to_numeric(df[c].str.replace(',', '.'), errors='raise')
@@ -188,21 +196,28 @@ def create_shortcuts_and_rename(df):
     df.columns = [c.strip(' ') for c in df.columns]
     df.rename(columns=reverse_mapping, inplace=True)
     # Ensure the 'Date' column is parsed into a datetime object for easier manipulation
-    df['date_time'] = pd.to_datetime(
-        df['time'].str.replace(' ', ''),  # Remove spaces for cleaner parsing
-        format='%d.%m.%H:%M'
-    )
+    date_time = pd.to_datetime(
+                    df['time'].str.replace(' ', ''),  # Remove spaces for cleaner parsing
+                    format='%d.%m.%H:%M')
+    zenith = 90 - df["sun_alt_w"]
+    new_cols = pd.DataFrame({
+        'date_time': date_time, # Extract hour and month from the parsed datetime
+        'hour': date_time.dt.hour,
+        'month': date_time.dt.month,
+        "Zenith": zenith,
+        'DNI': (df["GHI"] - df["DHI"]) / np.cos(np.radians(zenith)),
+    })
+    df = pd.concat([df, new_cols], axis=1)
 
-    # Extract hour and month from the parsed datetime
-    df['hour'] = df['date_time'].dt.hour
-    df['month'] = df['date_time'].dt.month
-
-    return df, shortcuts
-
+    # rename units keys
+    units_dict = {k.strip(' '): v for k, v in units.to_dict().items()}
+    units_dict = {reverse_mapping[k]:v for k,v in units_dict.items() if k in reverse_mapping}
+    return df, units_dict
 
 
 
-def plot_monthly_hourly_averages(df, date_col, q_col, color, ax=None):
+
+def plot_monthly_hourly_averages(df, q_col, unit, axes=None):
     """
     Plots monthly hourly averages of a given quantity 'Q' on the provided axis.
 
@@ -218,34 +233,79 @@ def plot_monthly_hourly_averages(df, date_col, q_col, color, ax=None):
     """
 
     # Prepare the plot
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 6))
+    #fig, axes = plt.subplots(2, 1, figsize=(10, 6))
+    ax1, ax2 = axes
 
-    # Use Seaborn lineplot with confidence interval
+    plotted_columns = ['hour', 'month', q_col]  # Replace with the relevant column names
+    df = df[plotted_columns].copy()
+
+    # Aggregate data: averages and maxima
+    avg_df = df.groupby(['hour', 'month'], as_index=False).mean()
+    max_df = df.groupby(['hour', 'month'], as_index=False).max()
+
+    color_list = [
+        "red",  # January
+        "orange",  # February
+        "gold",  # March
+        "limegreen",  # April
+        "green",  # May
+        "teal",  # June
+        "blue",  # July
+        "navy",  # August
+        "purple",  # September
+        "magenta",  # October
+        "brown",  # November
+        "pink"  # December
+    ]
+
+    # Create a custom palette from the color list
+    custom_palette = sns.color_palette(color_list)
+
+    # Plot averages on ax1
     sns.lineplot(
-        data=df,
+        data=avg_df,
         x='hour',
         y=q_col,
         hue='month',
-        palette=sns.color_palette([color] * 12),
-        #errorbar='sd',  # Use standard deviation for the shaded area
-        ax=ax
+        ax=ax1,
+        palette=custom_palette,
     )
+    ax1.set_title("Average")
 
-    # Customize the plot
-    ax.set_title(f"Hourly Averages and Standard Deviations of '{q_col}' by Month", fontsize=14)
-    ax.set_xlabel("Hour of Day", fontsize=12)
-    ax.set_ylabel(f"Average {q_col}", fontsize=12)
-    ax.legend(title="Month", loc='upper left', fontsize=10)
-    ax.grid(True)
+    # Plot maxima on ax2
+    sns.lineplot(
+        data=max_df,
+        x='hour',
+        y=q_col,
+        hue='month',
+        ax=ax2,
+        palette=custom_palette,
+    )
+    ax2.set_title("Maximum")
 
-    return ax
+    for ax in axes:
+        # Customize the plot
+        ax.set_xlabel("Hour of Day", fontsize=12)
+        ax.set_ylabel(f"{q_col} [{unit}]", fontsize=12)
+        ax.legend(title="Month", loc='upper left', fontsize=10)
+        ax.grid(True)
+
+    return axes
 
 @attrs.define
 class PanelConfig:
     n: int
     azimuth: int
     inclination: int
+
+
+
+# Example usage:
+# df['datetime'] = pd.date_range(start='2023-01-01 00:00', end='2023-01-02 00:00', freq='1H')
+# config = PanelConfig(n=10, azimuth=180, inclination=30)
+# production = compute_clear_sky_production(df['datetime'], 48.8566, 2.3522, config)  # Paris
+# print(production)
+
 
 # Example usage:
 # fig, ax = plt.subplots()
@@ -257,30 +317,64 @@ class PanelConfig:
 # print(df.head())
 # print(column_shortcuts)
 
+
+def fve_plots(df, units, file_prefix):
+    for col in ['irr_tilt', 'irr_eff', 'irr_global_pv', 'pv_energy_DC', 'pv_net_energy']:
+        col_e = col + '_e'
+        col_w = col + '_w'
+        if col_e in df.columns:
+            unit_e = units.get(col_e, "-")
+            unit_w = units.get(col_w, "-")
+            assert unit_e == unit_w, f"Units for {col} are different: {unit_e} vs {unit_w}"
+            fig, axes = plt.subplots(2, 2, figsize=(10, 6))
+            plot_monthly_hourly_averages(df, col_e, unit_e, axes=axes[0])
+            plot_monthly_hourly_averages(df, col_w, unit_w, axes=axes[1])
+            fig.savefig(workdir / (file_prefix + col + ".pdf"))
+        else:
+            unit = units.get(col, "-")
+            fig, axes = plt.subplots(1, 2, figsize=(10, 6))
+            plot_monthly_hourly_averages(df, col, unit, axes=axes)
+            fig.savefig(workdir / (file_prefix + col + ".pdf"))
+
+
 def main():
+    #df_spot = get_spot_price()
+
     fname = "FVE_Kadlec_strisky_SIM_241115.csv"
     lat, lon = 50.7663, 15.0543  # Liberec
+
+    # vertical panels
     panel_groups = {
         # inclination of panel, i.e. normal is 90 - inclination
         'East': PanelConfig(n=10, azimuth=120, inclination=90),
         'West': PanelConfig(n=10, azimuth=210, inclination=90),
     }
 
-    df = read_csv_to_dataframe(fname)
-    df, column_shortcuts = create_shortcuts_and_rename(df)
-    #plot_monthly_hourly_averages(df, 'time', 'irr_tilt_e', 'blue')
-    #plt.show()
+    # vertical panels
+    panel_groups = {
+        # inclination of panel, i.e. normal is 90 - inclination
+        'East': PanelConfig(n=18, azimuth=120, inclination=5),
+        'West': PanelConfig(n=18, azimuth=210, inclination=5),
+    }
 
-    for name, cfg in panel_groups.items():
-        df[name+'_panel_cos'] = compute_sun_normal_angle_with_pvlib(df, lat, lon, cfg.azimuth, cfg.inclination)
-        df[name+'_group_cos'] = cfg.n * compute_sun_normal_angle_with_pvlib(df, lat, lon, cfg.azimuth, cfg.inclination)
-
-    print(df.columns)
-    print(df.head())
-    plot_monthly_hourly_averages(df, 'time', 'East_panel_cos', 'blue')
-    plt.show()
-    plot_monthly_hourly_averages(df, 'time', 'West_panel_cos', 'blue')
-    plt.show()
+    df, units = read_csv_to_dataframe(fname)
+    df, units = create_shortcuts_and_rename(df, units)
+    fve_plots(df, units, "Kadlec_")
+    #
+    # horizon = make_horizon()
+    #
+    # fig, axes = plt.subplots(len(panel_groups), 2, figsize=(10, 10))
+    # for (name, cfg), ax in zip(panel_groups.items(), axes):
+    #     col_name = name + '_group_cos'
+    #     #df[name+'_panel_cos'] = compute_sun_normal_angle_with_pvlib(df, lat, lon, cfg.azimuth, cfg.inclination)
+    #     #df[col_name] = compute_clear_sky_production(df.date_time, lat, lon, cfg)
+    #     df[col_name] = compute_production(df, lat, lon, cfg)
+    #     plot_monthly_hourly_averages(df, 'date_time', col_name, 'blue', axes=ax)
+    #
+    # print(df.columns)
+    # print(df.head())
+    # fig.savefig(workdir / "cleansky_horizon.pdf")
+    # #plt.show()
 
 if __name__ == "__main__":
     main()
