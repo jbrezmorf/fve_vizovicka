@@ -4,6 +4,8 @@ import numpy as np
 import seaborn as sns
 import math
 from datetime import datetime, timedelta
+
+import pvlib_model
 #from pysolar.solar import get_azimuth, get_altitude
 from pvlib_model import *
 from spot import *
@@ -292,11 +294,6 @@ def plot_monthly_hourly_averages(df, q_col, unit, axes=None):
 
     return axes
 
-@attrs.define
-class PanelConfig:
-    n: int
-    azimuth: int
-    inclination: int
 
 
 
@@ -317,11 +314,15 @@ class PanelConfig:
 # print(df.head())
 # print(column_shortcuts)
 
-
 def fve_plots(df, units, file_prefix):
-    for col in ['irr_tilt', 'irr_eff', 'irr_global_pv', 'pv_energy_DC', 'pv_net_energy']:
+    cols_out = {'irr_tilt':'sum', 'irr_eff':'sum', 'irr_global_pv':'sum', 'pv_energy_DC':'sum', 'pv_net_energy':'sum'}
+    cols_full = {}
+    for col in cols_out.keys():
         col_e = col + '_e'
         col_w = col + '_w'
+        for c in [col, col_e, col_w]:
+            if c in df.columns:
+                cols_full[c] = cols_out[col]
         if col_e in df.columns:
             unit_e = units.get(col_e, "-")
             unit_w = units.get(col_w, "-")
@@ -330,26 +331,28 @@ def fve_plots(df, units, file_prefix):
             plot_monthly_hourly_averages(df, col_e, unit_e, axes=axes[0])
             plot_monthly_hourly_averages(df, col_w, unit_w, axes=axes[1])
             fig.savefig(workdir / (file_prefix + col + ".pdf"))
-        else:
+        elif col in df.columns:
             unit = units.get(col, "-")
             fig, axes = plt.subplots(1, 2, figsize=(10, 6))
             plot_monthly_hourly_averages(df, col, unit, axes=axes)
             fig.savefig(workdir / (file_prefix + col + ".pdf"))
 
+    # print month sums
+    print_df = df[cols_full.keys()].groupby(df['month']).agg(cols_full)
+    print_df.to_csv(workdir / (file_prefix + "month_sums.csv"))
 
 def main():
     #df_spot = get_spot_price()
 
+
+
+    # Reference calculation
     fname = "FVE_Kadlec_strisky_SIM_241115.csv"
-    lat, lon = 50.7663, 15.0543  # Liberec
+    df, units = read_csv_to_dataframe(fname)
+    df, units = create_shortcuts_and_rename(df, units)
+    fve_plots(df, units, "Kadlec_")
 
-    # vertical panels
-    panel_groups = {
-        # inclination of panel, i.e. normal is 90 - inclination
-        'East': PanelConfig(n=10, azimuth=120, inclination=90),
-        'West': PanelConfig(n=10, azimuth=210, inclination=90),
-    }
-
+    # Own model
     # vertical panels
     panel_groups = {
         # inclination of panel, i.e. normal is 90 - inclination
@@ -357,24 +360,11 @@ def main():
         'West': PanelConfig(n=18, azimuth=210, inclination=5),
     }
 
-    df, units = read_csv_to_dataframe(fname)
-    df, units = create_shortcuts_and_rename(df, units)
-    fve_plots(df, units, "Kadlec_")
-    #
-    # horizon = make_horizon()
-    #
-    # fig, axes = plt.subplots(len(panel_groups), 2, figsize=(10, 10))
-    # for (name, cfg), ax in zip(panel_groups.items(), axes):
-    #     col_name = name + '_group_cos'
-    #     #df[name+'_panel_cos'] = compute_sun_normal_angle_with_pvlib(df, lat, lon, cfg.azimuth, cfg.inclination)
-    #     #df[col_name] = compute_clear_sky_production(df.date_time, lat, lon, cfg)
-    #     df[col_name] = compute_production(df, lat, lon, cfg)
-    #     plot_monthly_hourly_averages(df, 'date_time', col_name, 'blue', axes=ax)
-    #
-    # print(df.columns)
-    # print(df.head())
-    # fig.savefig(workdir / "cleansky_horizon.pdf")
-    # #plt.show()
+    # Extract the named index and selected columns into a new DataFrame
+    columns_to_extract = ["date_time", "hour", "month", "DHI", "DNI", "GHI", "Zenith", "temp_out", "temp_mod_w", "temp_mod_e"]
+    new_df = df[columns_to_extract].reset_index()
+    model_df = pvlib_model.pv_model(panel_groups, new_df)
+    fve_plots(model_df, units, "JB_")
 
 if __name__ == "__main__":
     main()

@@ -1,5 +1,13 @@
 # FVE Vizovická - modely
 
+notes:
+Kadles 3.1. 10~9:30 
+Kacled eff irrad 11/78 = 0.14 kW/m2; 
+fvmodel (0.2kW/m2 for both east and west !!, one is ok other should be about 0.08kW/m2)
+Kadlec total 11kWh irrad, -> -8.8 conv loss -> 2.2kWh (22% efficiency); cca 60kWh modul ->  
+fve predicts 4.2 kWhfor just single array!!
+from pannel performance, using just linear scaling it should be about 3.2kWh 
+
 Postup:
 1. Model one year of clear sky production, use CET.
 2. Bar plot individual hours on X, month + value on Y, use different colors.
@@ -41,6 +49,7 @@ irrad_eff_* = irrad_na_modulu + korekce spektra (-1%)+ odraz od země (+0.1%) + 
 
 irrad_w: 0.143/m2 = 11.411 kWh
 irrad_e: 0.252/m2= 20.110 kWh
+
 
 5. 
 
