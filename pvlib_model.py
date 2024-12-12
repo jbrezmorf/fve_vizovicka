@@ -7,6 +7,7 @@ import pytz
 import pvlib
 
 import cfg
+import weather
 
 
 def spot_price():
@@ -89,6 +90,15 @@ def weather_from_input_df(df: pd.DataFrame):
         'module_temperature': df['temp_mod_w']
     })
 
+def get_weather(date_time):
+    unique_years = set(date_time.map(lambda x: x.year))
+    unique_years = list(sorted(unique_years))
+    df = weather.pvgis_data(cfg.location['latitude'], cfg.location['longitude'], [unique_years[0], unique_years[-1]])
+    #df = pvlib.iotools.get_pvgis_hourly(lat=cfg.location['latitude'], lon=cfg.location['longitude'], start=unique_years[0], end=unique_years[-1])
+    #df = weather.open_meteo(cfg.location['latitude'], cfg.location['longitude'], start=unique_years[0], end=unique_years[-1])
+    return df
+
+
 def pv_model(pannels:PanelConfig, df:pd.DataFrame):
     """
     Compute the production of a PV system given the configuration of the panels, the weather data and the location.
@@ -114,7 +124,7 @@ def pv_model(pannels:PanelConfig, df:pd.DataFrame):
 
     # Create location object
     location = pvlib.location.Location(**cfg.location)
-    # solar_position = pvlib.location.get_solarposition(times_utc_index)
+    #solar_position = pvlib.location.get_solarposition(times_utc_index)
     #
     # solar_azimuth = solar_position.azimuth
     # solar_zenith = solar_position.apparent_zenith
@@ -201,7 +211,7 @@ def pv_model(pannels:PanelConfig, df:pd.DataFrame):
             array_losses_parameters=dict(dc_ohmic_percent=0.5)
         )
     arrays = [pv_array(k, v) for k, v in pannels.items()]
-
+    idx_arr_dict = {arr.name: i for i, arr in enumerate(arrays)}
     system = pvlib.pvsystem.PVSystem(arrays=arrays, inverter_parameters=cfg.inverter)
     mc = pvlib.modelchain.ModelChain(
         system, location, aoi_model='physical',
@@ -211,10 +221,11 @@ def pv_model(pannels:PanelConfig, df:pd.DataFrame):
     mc.run_model(weather)
 
     new_cols = pd.DataFrame({
-        'irr_eff_e': mc.results.effective_irradiance[0],
-        'irr_eff_w': mc.results.effective_irradiance[1],
+        'irr_eff_e': mc.results.effective_irradiance[idx_arr_dict['East']],
+        'irr_eff_w': mc.results.effective_irradiance[idx_arr_dict['West']],
         'irr_global_pv': (mc.results.total_irrad[0].poa_global + mc.results.total_irrad[1].poa_global),
         'pv_energy_DC': (mc.results.dc[0].p_mp + mc.results.dc[1].p_mp) * 3600 / 1000,
+        'Zenith': mc.results.solar_position.apparent_zenith
     })
     res_df = pd.concat([df, new_cols], axis=1)
     return res_df

@@ -76,7 +76,9 @@ def zoom_plot_df(df):
     for ax_row, col in zip(axes, cols):
         for ax in ax_row:
             ax.plot(mdates.date2num(df.index), df[col])
+            ax.set_ylim(df[col].min(), df[col].max())
             ax.grid()
+        ax_row[0].set_ylabel(col)
 
     labels = ["Year", "Month", "Day"]
     for i, ax in enumerate(axes[0]):
@@ -87,15 +89,15 @@ def zoom_plot_df(df):
     plt.show()
 
 #################################
+if __name__ == '__main__':
+    # Generate some early data
+    dates = [datetime.datetime(2023, 1, 1) + datetime.timedelta(days=i, hours=j) for i in range(365) for j in range(24)]
+    x  = np.linspace(0.0, 365.0, len(dates))
+    #data = np.sin(2 * np.pi * x/365) + np.sin(2 * np.pi * (x % 365))
+    data =  x / 365 + np.sin(2 * np.pi * (x % 365))
+    df = pd.DataFrame({'time':dates, 'val':data, 'v1':2*data})
+    df = df.set_index('time')
 
-# Generate some early data
-dates = [datetime.datetime(2023, 1, 1) + datetime.timedelta(days=i, hours=j) for i in range(365) for j in range(24)]
-x  = np.linspace(0.0, 365.0, len(dates))
-#data = np.sin(2 * np.pi * x/365) + np.sin(2 * np.pi * (x % 365))
-data =  x / 365 + np.sin(2 * np.pi * (x % 365))
-df = pd.DataFrame({'time':dates, 'val':data, 'v1':2*data})
-df = df.set_index('time')
-
-zoom_plot_df(df)
+    zoom_plot_df(df)
 
 

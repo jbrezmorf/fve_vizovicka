@@ -1,7 +1,7 @@
 # Liberec
 location = dict(
-    latitude=50.7663,
-    longitude=15.0543
+    latitude=50.7441414,
+    longitude=15.0217061
 )
 
 # Fixed parameters of pvsystem.FixedMount, https://pvlib-python.readthedocs.io/en/stable/reference/generated/pvlib.pvsystem.FixedMount.html#pvlib.pvsystem.FixedMount

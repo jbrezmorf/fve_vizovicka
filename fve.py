@@ -1,3 +1,6 @@
+from typing import List, Tuple, Dict
+import json
+
 import attrs
 import pandas as pd
 import numpy as np
@@ -6,9 +9,11 @@ import math
 from datetime import datetime, timedelta
 
 import pvlib_model
+import pickle
 #from pysolar.solar import get_azimuth, get_altitude
 from pvlib_model import *
 from spot import *
+from zoom import zoom_plot_df
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -331,18 +336,196 @@ def fve_plots(df, units, file_prefix):
             plot_monthly_hourly_averages(df, col_e, unit_e, axes=axes[0])
             plot_monthly_hourly_averages(df, col_w, unit_w, axes=axes[1])
             fig.savefig(workdir / (file_prefix + col + ".pdf"))
+            plt.close(fig)
         elif col in df.columns:
             unit = units.get(col, "-")
             fig, axes = plt.subplots(1, 2, figsize=(10, 6))
             plot_monthly_hourly_averages(df, col, unit, axes=axes)
             fig.savefig(workdir / (file_prefix + col + ".pdf"))
+            plt.close(fig)
 
     # print month sums
     print_df = df[cols_full.keys()].groupby(df['month']).agg(cols_full)
     print_df.to_csv(workdir / (file_prefix + "month_sums.csv"))
 
+def concat_columns(df1, df2, cols, idx=None):
+    """
+    Extracts a specified column from two dataframes, optionally sets an index,
+    and concatenates them into a new dataframe.
+
+    Parameters:
+        df1 (pd.DataFrame): The first dataframe.
+        df2 (pd.DataFrame): The second dataframe.
+        col (str): The column to extract and concatenate.
+        idx (str, optional): Column to use as index before concatenation. Defaults to None.
+
+    Returns:
+        pd.DataFrame: The concatenated dataframe.
+    """
+    # Extract the specified column
+    concat_cols = []
+    for col in cols:
+        if idx in df1 and idx in df2:
+            df1_col = df1.set_index(df1[idx])[col]
+            df2_col = df2.set_index(df2[idx])[col]
+        else:
+            raise ValueError(f"Index column '{idx}' not found in both dataframes.")
+        diff =  pd.Series(df1_col - df2_col, name=f"{col}_diff")
+
+        df1_col.name = f"{col}_df1"
+        df2_col.name = f"{col}_df2"
+        concat_cols.extend([df1_col, df2_col, diff])
+
+    # Concatenate the two columns into a new dataframe
+    concatenated_df = pd.concat(concat_cols, axis=1)
+    return concatenated_df
+
+
+def estimate_time_shift(ts1, ts2):
+    """
+    Estimate the time shift (dt) between two time series using derivatives.
+
+    Parameters:
+        ts1 (pd.Series): First time series.
+        ts2 (pd.Series): Second time series.
+
+    Returns:
+        float: Estimated time shift (dt).
+    """
+    # Compute first differences (derivatives)
+    d_f1 = np.diff(ts1.values)
+    d_f2 = np.diff(ts2.values)
+
+    # Compute mean derivative
+    d_mean = (d_f1 + d_f2) / 2
+
+    # Mask where abs(d_mean) is greater than the lower quartile
+    mask = np.abs(d_mean) > 0.01
+
+    # Select valid points for f1, f2, and d_mean (accounting for the difference size due to np.diff)
+    f1_values = ts1.values[1:]  # First differences reduce the array size by 1
+    f2_values = ts2.values[1:]
+
+    f1_f2_diff = f1_values[mask] - f2_values[mask]
+    d_mean_masked = d_mean[mask]
+
+    # Estimate the time shift
+    dt = np.mean(f1_f2_diff / d_mean_masked)
+
+    return dt
+
+
+# Apply the fractional shift to ts2
+def apply_fractional_shift(ts, shift):
+    # Shift the index by the fractional amount
+    shifted_index = ts.index + pd.to_timedelta(shift, unit="H")
+
+    # Interpolate back to the original index
+    ts_shifted = ts.reindex(ts.index.union(shifted_index)).interpolate(method='cubicspline').reindex(ts.index)
+    return ts_shifted
+
+
+def plot_2d_data(x, y, z):
+    print(f"X range: {np.min(x)}, {np.max(x)}")
+    print(f"Y range: {np.min(y)}, {np.max(y)}")
+    print(f"Z range: {np.min(z)}, {np.max(z)}")
+    # Plot function and sample points
+    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    #c = ax.contourf(x, y, z, 15, cmap=plt.cm.RdBu);
+    scatter = ax.scatter(x, y, marker='.', c=z, cmap=plt.cm.RdBu)
+    #ax.set_ylim(-1, 1)
+    #ax.set_xlim(-1, 1)
+    ax.set_xlabel(r"$x$", fontsize=20)
+    ax.set_ylabel(r"$y$", fontsize=20)
+    cb = fig.colorbar(scatter, ax=ax)
+    cb.set_label(r"$z$", fontsize=20)
+    sc2 =ax2.scatter(x, z, c=y, marker='.', label='x', cmap=plt.cm.RdBu)
+    cb2 = fig.colorbar(sc2, ax=ax2)
+    plt.show()
+
+def approx_2d(in1, in2, out=None):
+    """
+    If 'out' is given:
+        - Construct approximation
+        - write down approximationg function
+        - apply to inputs
+    else:
+        - read approximation
+        - apply to inputs
+    :param in1:
+    :param in2:
+    :param out:
+    :return:
+    """
+    points = np.stack([in1, in2], axis=1)
+    func_file = workdir / "dc_approx"
+    if out is None:
+        with open(func_file, 'rb') as f:
+            func = pickle.load(f)
+    else:
+        values = out
+        func = interpolate.CloughTocher2DInterpolator(points, values, tol=1e-2, rescale=True)
+        with open(func_file, 'wb') as f:
+            pickle.dump(func, f)
+    return func(points), func
+
+@attrs.define
+class approx_fun:
+    basis: List[Tuple[int, int]]
+    coeffs: np.ndarray
+
+    def __call__(self, X, y):
+        # Define the callable object
+        X = np.atleast_2d(X)
+        X, y = np.asarray(X), np.asarray(y)
+        if X.shape[1] != y.shape[0]:
+            raise ValueError("x and y must have the same shape.")
+        # Evaluate the polynomial
+        return sum(c * np.sum(X ** px, axis=0) * (y ** py) for c, (px, py) in zip(self.coeffs, self.basis))
+
+
+def least_squares_fit(X, Y, Z, basis):
+    """
+    Perform a least squares fit for Z as a function of X and Y using a specified polynomial basis.
+
+    Parameters:
+        X (array-like): Input X values.
+        Y (array-like): Input Y values.
+        Z (array-like): Output Z values (target).
+        basis (list of tuple): List of (px, py) pairs where px and py are powers of X and Y.
+
+    Returns:
+        callable: A function fun(x, y) for evaluating the fitted surface.
+    """
+    # Validate input
+    X = np.atleast_2d(X)   # (2, N)
+    Y, Z = np.asarray(Y), np.asarray(Z) #(N,)
+    if X.shape[1] != Y.shape[0] or X.shape[1] != Z.shape[0]:
+        raise ValueError("X, Y, and Z must have the same shape.")
+
+    # Build the design matrix
+    A = np.column_stack([np.sum(X**px,axis=0) * Y**py for px, py in basis])
+
+    # Solve the least squares problem
+    coeffs, _, _, _ = np.linalg.lstsq(A, Z, rcond=None)
+    return approx_fun(basis, coeffs)
+
+def lin_2d_approx(in1, in2, out=None):
+    base = [(0,0), (1,0), (0,1), (1,1), (2, 0), (0, 2)]
+    func = least_squares_fit(in1, in2, out, base)
+    return func
+    # X = np.stack([np.ones(len(in1)), in1, in2, in1**2, in2**2, in1*in2], axis=1)
+    # func_file = workdir / "dc_approx"
+    # if out is None:
+    #     with open(func_file, 'rb') as f:
+    #         beta = pickle.load(f)
+    # else:
+    #     beta = np.linalg.lstsq(X.T, out)[0]
+    # func = lambda dc, temp : beta[0] + beta[1] * dc + beta[2] * temp
+    # return func(in1, in2), func
+
 def main():
-    #df_spot = get_spot_price()
+
 
 
 
@@ -350,6 +533,7 @@ def main():
     fname = "FVE_Kadlec_strisky_SIM_241115.csv"
     df, units = read_csv_to_dataframe(fname)
     df, units = create_shortcuts_and_rename(df, units)
+    df.to_csv(workdir / "Kadlec_df.csv")
     fve_plots(df, units, "Kadlec_")
 
     # Own model
@@ -361,10 +545,121 @@ def main():
     }
 
     # Extract the named index and selected columns into a new DataFrame
-    columns_to_extract = ["date_time", "hour", "month", "DHI", "DNI", "GHI", "Zenith", "temp_out", "temp_mod_w", "temp_mod_e"]
+    columns_to_extract = ["date_time", "hour", "month", "DHI", "DNI", "GHI", "temp_out", "temp_mod_w", "temp_mod_e"]
     new_df = df[columns_to_extract].reset_index()
     model_df = pvlib_model.pv_model(panel_groups, new_df)
+    model_df.to_csv(workdir / "model_df.csv")
     fve_plots(model_df, units, "JB_")
 
+    ################################################
+    # Perform linear fit
+    fit_col = 'irr_global_pv'
+    x = model_df[fit_col]
+    y = df[fit_col]
+    print(f"Squared error[{fit_col}: {np.sqrt(np.sum((np.array(y) - np.array(x))**2)/len(x))}")
+
+    coefficients = np.polyfit(x, y, deg=1)
+    slope, intercept = coefficients
+    print(f"Linear fit coefficients: slope={slope}, intercept={intercept}")
+
+    # Predict y_mod using the linear fit
+    y_mod = slope * x + intercept
+    dt = estimate_time_shift(y_mod, y)
+    print(f"Estimated time shift: {dt:.2f} hours)")
+    y_mod = apply_fractional_shift(pd.Series(y_mod, index=x.index), dt)
+    print(f"Squared error [{fit_col}] fitted: {np.sqrt(np.sum((np.array(y) - np.array(y_mod))**2)/len(x))}")
+
+    fit_col_new = fit_col + "_mod"
+    df[fit_col_new] = df[fit_col]
+    model_df[fit_col_new] = y_mod
+
+    ##################################
+    # Nonlinear fit  Kadlec pv_energy_DC as function of model pv_energy_DC to model irr_global_pv and temparature
+
+
+
+    # x = model_df['pv_energy_DC']
+    irr_w = np.array(model_df['irr_eff_w'])
+    irr_e = np.array(model_df['irr_eff_e'])
+    model_dc = np.array(model_df['pv_energy_DC'])
+    kadlec_dc = np.array(df['pv_energy_DC'])
+    temp_out = np.array(df['temp_out'])
+
+    # mask = np.logical_and(model_dc > 1e-2,  kadlec_dc > 1e-2)
+    # assert len(kadlec_dc) == len(model_dc), "Lengths of Kadlec and model dataframes do not match"
+    # assert len(kadlec_dc) == len(temp_out), "Lengths of Kadlec and temperature dataframes do not match"
+    #
+    # #plot_2d_data(model_dc, temp_out, kadlec_dc - model_dc)
+    #
+    # frac = kadlec_dc[mask]/model_dc[mask]
+    # coefficients = np.polyfit(temp_out[mask], frac, deg=2)
+    # lin_model_dc = lambda T : coefficients[2] + coefficients[1] * T + coefficients[0] * T**2
+    # # plt.scatter(temp_out[mask], frac)
+    # # T = np.linspace(np.min(temp_out), np.max(temp_out), 100)
+    # # plt.plot(T, lin_model_dc(T), c='red')
+    # # plt.show()
+    # print(f"Temperature model fit coefficients: {coefficients}")
+    # # dc_mod = slope * x + intercept
+    # model_dc_non_lin_T = lin_model_dc(temp_out) * model_dc
+    # #plot_2d_data(model_dc, temp_out, kadlec_dc - model_dc_non_lin_T)
+    #
+    # # Linear fit to handle extrapolation
+    # lin_func = lin_2d_approx(model_dc, temp_out, out=kadlec_dc)
+    # model_dc_lin = lin_func(model_dc, temp_out)
+    # # plot_2d_data(model_dc, temp_out, kadlec_dc - model_dc_lin)
+    # #model_dc_new, dc_func = approx_2d(model_dc, temp_out, out=kadlec_dc)
+    #
+    # coefficients = np.polyfit(model_dc, kadlec_dc, deg=1)
+    # slope, intercept = coefficients
+    # print(f"Linear fit coefficients: slope={slope}, intercept={intercept}")
+    # dc_mod_lin_X = slope * model_dc + intercept
+    # # plot_2d_data(model_dc, temp_out, kadlec_dc - dc_mod_lin_X)
+
+    # Least sq . for temperature, west and east irrad.
+    # We want to get model that is independent of angle, so it must be:
+    # total = (X_w  + X_e) @ beta
+    base = [(0,0), (1,0), (0,1), (1,1), (2, 0), (0, 2), (2, 1), (1, 2), (2, 2), (3, 0), (0, 3)]
+    func_we = least_squares_fit((irr_e, irr_w), temp_out, kadlec_dc, base)
+    dc_mod_we = func_we((irr_e, irr_w), temp_out)
+    plot_2d_data(irr_e, temp_out, kadlec_dc - dc_mod_we)
+    plot_2d_data(irr_w, temp_out, kadlec_dc - dc_mod_we)
+
+    func_file = workdir / "dc_approx"
+    with open(func_file, 'wb') as f:
+        pickle.dump(func_we, f)
+    model_df['pv_energy_DC'] = dc_mod_we
+    cmp_df = concat_columns(df, model_df, ['irr_global_pv', 'pv_energy_DC'], 'date_time')
+    zoom_plot_df(cmp_df)
+
+
+def optimize():
+    # Plot together production and spot
+    df_spot = get_spot_price([2023])
+    print(df_spot.head())
+
+    weather = pvlib_model.get_weather(df_spot['date_time'])
+    df_spot.set_index('date_time', inplace=True)
+    # interpolate to common times
+    interpolated_weather = weather\
+        .reindex(weather.index.union(df_spot.index))\
+        .interpolate(method='cubicspline').loc[df_spot.index]
+
+    # Combine spot prices and interpolated weather data
+    input_df = pd.concat([df_spot, interpolated_weather], axis=1)
+
+    panel_groups = {
+        # inclination of panel, i.e. normal is 90 - inclination
+        'East': PanelConfig(n=18, azimuth=120, inclination=5),
+        'West': PanelConfig(n=18, azimuth=210, inclination=5),
+    }
+
+    # model_df = pvlib_model.pv_model(panel_groups, new_df)
+    # model_df.to_csv(workdir / "model_df.csv")
+    # fve_plots(model_df, units, "JB_")
+
+    zoom_plot_df(input_df)
+
+
 if __name__ == "__main__":
-    main()
+    #main()
+    optimize()

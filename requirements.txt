@@ -1,5 +1,8 @@
 #PyYAML
 requests
+openmeteo_requests
+requests_cache
+retry_requests
 attrs
 #tqdm        # progress bar
 joblib

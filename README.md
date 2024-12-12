@@ -2,8 +2,9 @@
 
 notes:
 Kadles 3.1. 10~9:30 
-Kacled eff irrad 11/78 = 0.14 kW/m2; 
+Kaclec eff irrad 11.346/79.8 = 0.142 kW/m2;
 fvmodel (0.2kW/m2 for both east and west !!, one is ok other should be about 0.08kW/m2)
+
 Kadlec total 11kWh irrad, -> -8.8 conv loss -> 2.2kWh (22% efficiency); cca 60kWh modul ->  
 fve predicts 4.2 kWhfor just single array!!
 from pannel performance, using just linear scaling it should be about 3.2kWh 

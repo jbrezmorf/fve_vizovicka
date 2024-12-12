@@ -71,22 +71,19 @@ def read_process_zipped_xlsx(zip_path: pathlib.Path):
     df = set_datetime_index_simple(df, date_col='date', hour_col='hour')
     return df
 
-def get_spot_price():
+def get_spot_price(years):
+    spot_file = workdir / "spot_price.csv"
+    if spot_file.exists():
+        combined_df = pd.read_csv(spot_file, parse_dates=["date_time"])# Example usage:
+    else:
+        df_list = [read_process_zipped_xlsx(spot_dir / f"Rocni_zprava_o_trhu_{y}_V0.zip") for y in years]
+        combined_df = pd.concat(df_list)
 
-    # Example usage:
-    # Suppose the XLSX file inside each ZIP is named "data.xlsx"
-    df1 = read_process_zipped_xlsx(spot_dir / "Rocni_zprava_o_trhu_2023_V0.zip")
-    df2 = read_process_zipped_xlsx(spot_dir / "Rocni_zprava_o_trhu_2024_V0.zip")
-
-    # Concatenate the two DataFrames
-    combined_df = pd.concat([df1, df2])
-
-    # Sort by the index if needed (e.g., if times are out of order)
-    combined_df.sort_index(inplace=True)
-    combined_df.to_csv(workdir / "spot_price.csv")
-
-
-
+        # Sort by the index if needed (e.g., if times are out of order)
+        combined_df.sort_index(inplace=True)
+        combined_df.reset_index(inplace=True)
+        combined_df.to_csv(spot_file, index=False)
+    return combined_df
 
 
 if __name__ == "__main__":
