@@ -1,6 +1,57 @@
 # FVE Vizovická - modely
 
+Model summary:
+- FVE production model using pvlib, when compared to Kadlec model using its GHI and DHI the 
+  DC production was overestimated; could not determine the reason, but able to construct a 
+  cubic model dependent on model_dc and air temperature to get agreement with Kadlec model up to about +/-7% 
+  and matching mean production.
+- the weather for years up to 2023 for any given location is downloaded from pvGIS
+- spot prices (EUR/MWh) for each hour are extracted from OTE reports, having years from 2018
+- since we want to exclude years affected by covid and war related energy violated prices we parform optimization for 
+  2018, 2019 and 2023
+- the consumption model is taken from Kadlec model with a correction that the portion attributed to the heating 
+  is correlated to the the negetive part of (air temp - 10).
+- A simple selling logic is applied:
+  1. for each day we determine reminded energy and assing it to the hours with max product price*production
+  2. we go sequentialy over the day hours trying to sell planed value use reminded energy to charge battery and discharge for
+     for consumption.
+  3. What could not be coverted by battery is back propagated to buy/sell model
+  4. buy/sell accounts for distribution fees given by "BezDodavatele.cz" about 4Kč dayly and 450 for MWh buyed or sell.
+
+- A simple optimization was performed first computing verians for the 'east' pannels resulting to 
+  'optimal' value about 110 deg azimuth, 50 deg tilt; Then the west pannels were changed resulting to 
+- 'optimal' on the east bound of the azimuth range. Orienting all pannels to the east could be the best choice after all.
+  But that could be result of poor sell model.
+- Dayly curves of production and irradiation especially for the east orientations exhibit a morning peaks. These seems to be already in the 
+  pvGIS data. Not sure if these are real. That could also affect the optimization results.
+
+TODO:
+- tray to make optimization more robust in order to optimize for different years, models
+  1. parametrize optimization be model setting
+  2. three stage optimization : 
+        1. compute for all pannels in same direction, tilt with large step
+        2. determine best 10 cases continue with a genetic optimization
+        3. loss: a * revenue + b * dispersion ; sensitivity of revenue to weather and price
+        2. find optimal sell model for each year
+        3. find optimal battery management model for each year
+- empirical sell model including optimisation of consumption, price*consumption coverd should be treated like revenue
+
+- better battery management model:
+  - collect all days togehter with starting battery state for different pannel setting and different years
+  - use indeger control programming to optimize
+  - train NN model to predict sell for next hour using production and price prediciton (noised) and current state 
 notes:
+podmínky prodeje / připojení
+- článek na TZB info: https://oze.tzb-info.cz/fotovoltaika/26135-jak-se-ucinne-branit-proti-fakturam-za-pretoky-u-mikrozdroju
+- řada technických podmínek zajišťujících kvalitu výroby (napětí, frekvence, fáze) to by měl řešit kvalitní střídač
+- nutno mít od distributora "rezervovaný výkon" za překročení se platí pokuta cca 1713/ (kWměsíc) = 2.38 Kč/kWh
+- pro zdroje na 3 fázích se pokuta počítá pro překročení rezervovaného výkonu nad 300W 
+- překročená prováděno měsíčně (? platí i nově nebo je to po hodině)
+Ověřit schopnosti střídače: 
+- zajistit kvalitu výroby
+- asymetrický sřídač, adaptivně krmí fáze podle potřeby
+- připojení na jednotlivé fáze je asi až v bytových rozvaděčích a otázka je jak je vyvážené ??
+
 Kadles 3.1. 10~9:30 
 Kaclec eff irrad 11.346/79.8 = 0.142 kW/m2;
 fvmodel (0.2kW/m2 for both east and west !!, one is ok other should be about 0.08kW/m2)
@@ -10,20 +61,11 @@ fve predicts 4.2 kWhfor just single array!!
 from pannel performance, using just linear scaling it should be about 3.2kWh 
 
 Postup:
-1. Model one year of clear sky production, use CET.
-2. Bar plot individual hours on X, month + value on Y, use different colors.
-3. Plot individual days shifted in X  as dots
-4. Nearl perfect agreement between irradiation models.
-6. Get spot prices over last two years.
 
 
-==
-5. agreement for production for Kadlec and JB
 6. Use real weather for 2023 and 2024
-7. Use spot prices
-
-4. Model and compare actual total production in kWh for indivisual hours.
-Kadlec:
+=======================================================
+Kadlec tables:
 TB: 9 vychod, 9 zapad, surf 39.9m2
 
 JB: 18 vychod 18 zapad, surf 79.8m2
@@ -51,19 +93,8 @@ irrad_eff_* = irrad_na_modulu + korekce spektra (-1%)+ odraz od země (+0.1%) + 
 irrad_w: 0.143/m2 = 11.411 kWh
 irrad_e: 0.252/m2= 20.110 kWh
 
+=======================================================
 
-5. 
-
-4. Download weather, plot production affecte dby weather (need more realistic PV model including diffused light)
-5. Compare to model from Kadlec. 
-6. Get spot prices over last two years.
-7. Optimize angle to maximize revenue if only can sell or buy. 
-   Real revenues would be higher since any autonomous consumption of the produced energy is net income.
-   This is in max. contrast to the optimisation without selling.
-   
-   
-8. Rule based  model of consumption. Const profile over day + linear corralation of heating to temperature.
-9. Optimized consumption: control variables: 0/1 heat pump, 0/1 FV, 0-1 grid, střídač výkon +/-
    
 
 Self shading:

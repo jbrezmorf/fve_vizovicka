@@ -35,11 +35,11 @@ def pvgis_data(latitude, longitude, years):
     df = pd.DataFrame(data["outputs"]["hourly"])
     df_data = {
         'date_time':  pd.to_datetime(df['time'], format='%Y%m%d:%H%M'),
-        'GHI': df['Gb(i)'],
-        'DHI': df['Gd(i)'],
-        'ground_reflected': df['Gr(i)'],
-        'integrated': df['Int'],
-        'sun_hours': df['H_sun'],
+        'Ibeam': df['Gb(i)'],
+        'Idiff': df['Gd(i)'],
+        #'ground_reflected': df['Gr(i)'],
+        #'integrated': df['Int'],
+        'sun_elevation': df['H_sun'],
         'temp_out': df['T2m'],
         'wind_10m': df['WS10m']
     }

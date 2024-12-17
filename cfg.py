@@ -1,3 +1,11 @@
+
+import pathlib
+script_dir = pathlib.Path(__file__).parent
+workdir = script_dir / "workdir"
+import joblib
+mem = joblib.Memory(location = script_dir / "joblib_cache", verbose=0)
+
+
 # Liberec
 location = dict(
     latitude=50.7441414,

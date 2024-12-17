@@ -1,5 +1,6 @@
 #PyYAML
 requests
+joblib
 openmeteo_requests
 requests_cache
 retry_requests
@@ -10,6 +11,7 @@ joblib
 #openpyxl
 pandas
 seaborn
+scikit-learn
 matplotlib
 plotly
 #ipykernel

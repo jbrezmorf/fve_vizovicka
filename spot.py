@@ -2,6 +2,7 @@ import pandas as pd
 import zipfile
 from io import BytesIO
 import pathlib
+import cfg
 script_dir = pathlib.Path(__file__).parent
 workdir = script_dir / "workdir"
 spot_dir = script_dir / "spot_trh"
@@ -71,6 +72,7 @@ def read_process_zipped_xlsx(zip_path: pathlib.Path):
     df = set_datetime_index_simple(df, date_col='date', hour_col='hour')
     return df
 
+@cfg.mem.cache
 def get_spot_price(years):
     spot_file = workdir / "spot_price.csv"
     if spot_file.exists():

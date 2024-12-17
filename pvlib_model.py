@@ -1,7 +1,10 @@
+from typing import Dict
 import attrs
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from fit_models import estimate_time_shift
+from plot_days import fve_plots
 import scipy.interpolate as interpolate
 import pytz
 import pvlib
@@ -57,39 +60,41 @@ def make_horizon():
 
 
 
-    azimuth = np.arange(0, 361, 1.0)
-    horizon_profile = pd.Series(interp_func(azimuth), index=azimuth)
+    # azimuth = np.arange(0, 361, 1.0)
+    # horizon_profile = pd.Series(interp_func(azimuth), index=azimuth)
 
     # Create a matplotlib figure and axis
-    fig, ax = plt.subplots(figsize=(8, 4))
-
-    horizon_profile.plot(ax=ax, xlim=(0, 360), ylim=(0, None))
-    ax.set_title('Horizon profile')
-    ax.set_xticks([0, 90, 180, 270, 360])
-    ax.set_xlabel('Azimuth [°]')
-    ax.set_ylabel('Horizon angle [°]')
-    plt.savefig('horizon_profile.pdf', bbox_inches='tight')
+    # fig, ax = plt.subplots(figsize=(8, 4))
+    #
+    # horizon_profile.plot(ax=ax, xlim=(0, 360), ylim=(0, None))
+    # ax.set_title('Horizon profile')
+    # ax.set_xticks([0, 90, 180, 270, 360])
+    # ax.set_xlabel('Azimuth [°]')
+    # ax.set_ylabel('Horizon angle [°]')
+    # plt.savefig('horizon_profile.pdf', bbox_inches='tight')
     return interp_func
 
 
 
 
-def weather_from_input_df(df: pd.DataFrame):
-    """
-    See obligatory and optional fields:
-    https://pvlib-python.readthedocs.io/en/stable/reference/generated/pvlib.modelchain.ModelChain.run_model.html#pvlib.modelchain.ModelChain.run_model
-    :param df:
-    :return:
-    """
-    return pd.DataFrame({
-        'ghi': df['GHI'],
-        'dhi': df['DHI'],
-        'dni': df['DNI'],
-        'temp_air': df['temp_out'],
-        # module temperature imply temperature_model must be 'sapm'
-        'module_temperature': df['temp_mod_w']
-    })
+# def weather_from_input_df(df: pd.DataFrame):
+#     """
+#     See obligatory and optional fields:
+#     https://pvlib-python.readthedocs.io/en/stable/reference/generated/pvlib.modelchain.ModelChain.run_model.html#pvlib.modelchain.ModelChain.run_model
+#     :param df:
+#     :return:
+#     """
+#     return pd.DataFrame({
+#         'ghi': df['GHI'],
+#         'dhi': df['DHI'],
+#         'dni': df['DNI'],
+#         'temp_air': df['temp_out'],
+#         'Zenith': 90 - df['sun_elevation'],
+#         # module temperature imply temperature_model must be 'sapm'
+#         'module_temperature': df['temp_mod_w']
+#     })
 
+@cfg.mem.cache
 def get_weather(date_time):
     unique_years = set(date_time.map(lambda x: x.year))
     unique_years = list(sorted(unique_years))
@@ -99,7 +104,7 @@ def get_weather(date_time):
     return df
 
 
-def pv_model(pannels:PanelConfig, df:pd.DataFrame):
+def pv_model(pannels:Dict[str,PanelConfig], df:pd.DataFrame, horizon=False):
     """
     Compute the production of a PV system given the configuration of the panels, the weather data and the location.
 
@@ -113,38 +118,68 @@ def pv_model(pannels:PanelConfig, df:pd.DataFrame):
     - np.ndarray: Production in Watts.
     """
 
-    cet_timezone = pytz.timezone('CET')
-    times_cet = pd.to_datetime(df.date_time).dt.tz_localize(cet_timezone)
-    times_utc = times_cet.dt.tz_convert('UTC')
-    times_utc = times_utc + pd.Timedelta(hours=-0.2)
+    #cet_timezone  = pytz.FixedOffset(60)  # 60 minutes = 1 hours, CET winter is UTC+1
+    #pytz.timezone('CET')
+    #times_cet = pd.to_datetime(df.date_time).dt.tz_localize(cet_timezone)
+    #times_utc = times_cet.dt.tz_convert('UTC')
+    #times_utc = times_utc + pd.Timedelta(hours=-0.2)
     # Ensure the index is a DatetimeIndex
-    times_utc_index = times_utc if isinstance(times_utc, pd.DatetimeIndex) \
-        else pd.DatetimeIndex(times_utc)
-    df = df.set_index(times_utc_index)
+    #times_utc_index = times_utc if isinstance(times_utc, pd.DatetimeIndex) \
+    #    else pd.DatetimeIndex(times_utc)
+    #df = df.set_index(times_utc_index)
+    df = df.set_index('date_time')
+    df_zenith = 90 - df['sun_elevation']
 
     # Create location object
     location = pvlib.location.Location(**cfg.location)
-    #solar_position = pvlib.location.get_solarposition(times_utc_index)
-    #
+    solar_position = location.get_solarposition(df.index)
     # solar_azimuth = solar_position.azimuth
-    # solar_zenith = solar_position.apparent_zenith
-    # print(f"Zenith difference: {np.max(np.abs(solar_zenith - df['Zenith']))}, {np.mean(np.abs(solar_zenith - df['Zenith']))}")
-    # df['Zenith'] = solar_zenith
+    solar_zenith = solar_position.apparent_zenith
     # solar_elevation = solar_position.apparent_elevation
-    # dni = df['DNI']
-    # ghi = df['GHI']
-    # dhi = df['DHI']
+
+    # Time correction to best Zenith fit
+    dt = estimate_time_shift(np.minimum(90.0, solar_zenith), df_zenith)
+    # dt > 0 means df_zenith is delayed by dt after solar_zenith
+    print("Time shift:", dt)
+    # Shift time and thus the computed solar zenith
+    times_shifted= df.index + pd.Timedelta(hours=-dt)
+
+    solar_position = location.get_solarposition(pd.DatetimeIndex(times_shifted))
+    solar_azimuth = np.array(solar_position.azimuth)
+    solar_zenith = np.array(solar_position.apparent_zenith)
+    solar_elevation = np.array(solar_position.apparent_elevation)
+
+    df['solar_zenith'] = np.minimum(90, np.array(solar_zenith))
+    df['Zenith'] = df_zenith
+    fve_plots(cfg.workdir, df, {}, "sun_", ['Zenith', 'solar_zenith'])
+
+    if 'DNI' not in df.columns:
+        Ibeam = df['GHI'] - df['DHI']
+        dni =  Ibeam / df_zenith   # Direct Normal Irradiance
+    else:
+        dni = df['DNI']
+    ghi = df['GHI']
+    dhi = df['DHI']
+    if horizon:
+        horizon_func = make_horizon()
+        # # Map solar_azimuth to horizon values
+        horizon_for_date_time = horizon_func(solar_azimuth)
     #
-    # horizon_func = make_horizon()
-    # # Map solar_azimuth to horizon values
-    # horizon_for_date_time = horizon_func(solar_azimuth)
-    #
-    # # Adjust DNI based on data - note this is returned as numpy array
-    # dni_adjusted = np.where(solar_elevation > horizon_for_date_time, dni, 0)
+        # # Adjust DNI based on data - note this is returned as numpy array
+        dni = np.where(solar_elevation > horizon_for_date_time, dni, 0)
+        ghi = np.where(dni == 0, dhi, ghi)
     #
     # # Adjust GHI and set it to DHI for time-periods where 'dni_adjusted' is 0.
     # # Note this is returned as numpy array
-    # ghi_adjusted = np.where(dni_adjusted == 0, dhi, ghi)
+    weather = pd.DataFrame({
+        'ghi': ghi,
+        'dhi': dhi,
+        'dni': dni,
+        'temp_air': df['temp_out'],
+        # module temperature imply temperature_model must be 'sapm'
+        #'module_temperature': df['temp_mod_w']
+    })
+
     #
     # # Create PV system with specified configuration
     # system = pvlib.pvsystem.PVSystem(
@@ -152,18 +187,21 @@ def pv_model(pannels:PanelConfig, df:pd.DataFrame):
     #     surface_azimuth=panel_config.azimuth
     # )
     #
-    # module_dict = dict(
-    #     surface_tilt=panel_config.inclination,
-    #     surface_azimuth=panel_config.azimuth,
-    #     solar_zenith=solar_zenith,
-    #     solar_azimuth=solar_azimuth,
-    #     dni=dni_adjusted,
-    #     ghi=ghi_adjusted,
-    #     dhi=dhi
-    # )
-    #
-    # # Compute total irradiance (plane-of-array)
-    # poa_irradiance = pvlib.irradiance.get_total_irradiance(**module_dict)
+    def irrad_func(name, pannel:PanelConfig):
+        module_dict = dict(
+             surface_tilt=pannel.inclination,
+             surface_azimuth=pannel.azimuth,
+             solar_zenith=solar_zenith,
+             solar_azimuth=solar_azimuth
+         )
+        module_dict.update(weather)
+        del module_dict['temp_air']
+        # # Compute total irradiance (plane-of-array)
+        res_df = pvlib.irradiance.get_total_irradiance(**module_dict)
+        return res_df.rename(columns={k: f'{k}_{name}' for k in res_df.columns})
+    dfs = [irrad_func(k, v) for k, v in pannels.items()]
+    irrad_df = pd.concat([weather, *dfs], axis=1)
+
     #
     # # Calculate AOI and Reflection Loss
     # aoi = pvlib.irradiance.aoi(**module_dict)
@@ -217,15 +255,17 @@ def pv_model(pannels:PanelConfig, df:pd.DataFrame):
         system, location, aoi_model='physical',
         spectral_model='no_loss')
 
-    weather = weather_from_input_df(df)
     mc.run_model(weather)
 
     new_cols = pd.DataFrame({
+        #'dni': weather['dni'],
+        #'dhi': weather['dhi'],
+        #'ghi': weather['ghi'],
         'irr_eff_e': mc.results.effective_irradiance[idx_arr_dict['East']],
         'irr_eff_w': mc.results.effective_irradiance[idx_arr_dict['West']],
         'irr_global_pv': (mc.results.total_irrad[0].poa_global + mc.results.total_irrad[1].poa_global),
         'pv_energy_DC': (mc.results.dc[0].p_mp + mc.results.dc[1].p_mp) * 3600 / 1000,
-        'Zenith': mc.results.solar_position.apparent_zenith
+        'calc_zenith': mc.results.solar_position.apparent_zenith
     })
-    res_df = pd.concat([df, new_cols], axis=1)
+    res_df = pd.concat([df, new_cols, irrad_df], axis=1)
     return res_df

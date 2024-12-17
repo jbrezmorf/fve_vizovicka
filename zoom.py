@@ -11,11 +11,11 @@ class MultiZoomer:
         self.fig = fig
         self.axes = np.atleast_2d(axes)
         self.cid = fig.canvas.mpl_connect('button_press_event', self.onclick)
-        print(self.axes[0, 0].get_xlim())
+        #print(self.axes[0, 0].get_xlim())
         self.x_range = self.axes[0, 0].get_xlim()
         spans = [365, 30, 2]
         self.spans = (self.x_range[1] - self.x_range[0]) * np.array([365, 30, 1]) / 365.0
-        print("Range:", self.x_range)
+        #print("Range:", self.x_range)
         self.x_center = (self.x_range[0] + self.x_range[1]) / 2
 
         self.update()
@@ -27,7 +27,7 @@ class MultiZoomer:
                 # Adjust limits while respecting the data range
                 new_xmin = max(self.x_range[0], self.x_center - span/2)
                 new_xmax = min(self.x_range[1], self.x_center + span/2)
-                print(new_xmin, new_xmax, span)
+                #print(new_xmin, new_xmax, span)
                 ax.set_xlim(new_xmin, new_xmax)
             # Custom tick locators and formatters
             # axes[0]: Month minor ticks for month starts, month shortcut labels, major tick for year start
@@ -67,6 +67,7 @@ class MultiZoomer:
 
 
 def zoom_plot_df(df):
+    df.index = pd.to_datetime(df.index)
     cols = df.columns
     # Set up the figure and grid of axes (3 columns)
     fig, axes = plt.subplots(len(cols), 3, figsize=(30, 6), constrained_layout=True, sharey='row', sharex='col')
@@ -76,8 +77,11 @@ def zoom_plot_df(df):
     for ax_row, col in zip(axes, cols):
         for ax in ax_row:
             ax.plot(mdates.date2num(df.index), df[col])
-            ax.set_ylim(df[col].min(), df[col].max())
+            range = df[col].min(), df[col].max()
+            assert range[0] < range[1], f"Col={col}, Invalid range: {range}"
+            ax.set_ylim(*range)
             ax.grid()
+            #print("X range", ax.get_xlim())
         ax_row[0].set_ylabel(col)
 
     labels = ["Year", "Month", "Day"]
