@@ -117,3 +117,94 @@ def fve_plots(workdir, df, units, file_prefix, cols_out):
     df.set_index('date_time', inplace=True)
     plot_df = df[cols_full.keys()]
     return plot_df
+
+def tilt_plot(tilt_rows, axes, col):
+    """
+    Compute averages by month and hour, then plot df[col] (Y-axis) against hour (X-axis),
+    using azimuth for coloring, and place different months on different axes.
+
+    :param tilt_rows: pandas DataFrame rows corresponding to a specific tilt and column
+    :param axes: array of matplotlib Axes
+    :param col: name of the column to plot on the Y-axis
+    """
+    # Ensure 'date_time' column is a datetime object
+    date_time = pd.to_datetime(tilt_rows['date_time'])
+    df = tilt_rows.copy()
+    # Extract necessary time features
+    df['month'] = date_time.dt.month
+    df['hour'] = date_time.dt.hour
+
+    # Get the size (number of elements) in each group
+    group_sizes = df.groupby(['month', 'hour', 'azimuth']).size()
+
+    # Find the minimal and maximal group sizes
+    min_size = group_sizes.min()
+    max_size = group_sizes.max()
+
+    print(f"Minimal group size: {min_size}")
+    print(f"Maximal group size: {max_size}")
+
+    # Group by month and hour, then compute the mean for each group
+    grouped = df.groupby(['month', 'hour', 'azimuth']).mean().reset_index()
+
+    # Iterate over months and plot on different axes
+    unique_months = grouped['month'].unique()
+    for ax, month in zip(axes, sorted(unique_months)):
+        # Filter for the current month
+        month_data = grouped[grouped['month'] == month]
+
+        # Plot using seaborn
+        sns.lineplot(
+            data=month_data,
+            x='hour',
+            y=col,
+            hue='azimuth',
+            palette='viridis',
+            ax=ax
+        )
+
+        # Set axis titles and legend
+        ax.set_title(f"Month: {month}")
+        ax.set_xlabel("Hour")
+        ax.set_ylabel(col)
+        ax.legend(title="Azimuth", loc="best")
+
+
+def month_plot(workdir, df, file_prefix):
+    """
+    Generates plots by looping over unique tilt values and a list of column filters (colsums).
+    Creates 3x4 axes for each tilt and column combination, passes the filtered DataFrame to tilt_plot,
+    and saves each figure to an individual PDF file.
+
+    :param df: pandas DataFrame with at least 'tilt' column
+    :param colsums: list of column names to filter by
+    :param tilt_plot: function to plot data for a given tilt and sub DataFrame; receives rows and an axes array
+    :param output_prefix: prefix for the output PDF files
+    """
+    unique_tilts = df['tilt'].unique()
+
+    for col in set(df.columns) - {'tilt', 'date_time', 'azimuth'}:
+        for tilt in unique_tilts:
+            # Filter rows for the current tilt and column
+            tilt_rows = df[df['tilt'] == tilt]
+
+            # Create a figure and 3x4 grid of axes
+            fig, axes = plt.subplots(3, 4, figsize=(15, 10))
+            axes = axes.flatten()  # Flatten for easier iteration
+
+            # Pass rows and axes to the tilt_plot function
+            tilt_plot(tilt_rows, axes, col)
+
+            # Adjust layout
+            fig.tight_layout()
+
+            # Add a title for the figure
+            fig.suptitle(f'Tilt: {tilt}, Column: {col}', fontsize=16)
+            fig.subplots_adjust(top=0.9)  # Adjust space for title
+
+            # Save the figure to a PDF file
+            output_file = workdir / f"{file_prefix}_tilt_{tilt}_col_{col}.pdf"
+            fig.savefig(output_file)
+            plt.close(fig)  # Close the figure to free memory
+
+

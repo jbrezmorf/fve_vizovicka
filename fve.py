@@ -2,6 +2,8 @@ import itertools
 import shutil
 
 import numpy as np
+from pvlib import irradiance, location
+from pvlib.iotools import read_tmy3
 
 import pvlib_model
 import pickle
@@ -9,7 +11,7 @@ import pickle
 import fit_models as  fit_mod
 from import_model import read_model_xlsx
 from operation import model_operation, OperationCfg, model_operation_lp
-from plot_days import fve_plots
+from plot_days import fve_plots, month_plot
 #from pysolar.solar import get_azimuth, get_altitude
 from pvlib_model import *
 from spot import *
@@ -68,8 +70,8 @@ def main():
     # vertical panels
     panel_groups = {
         # inclination of panel, i.e. normal is 90 - inclination
-        'East': PanelConfig(n=18, azimuth=120, inclination=5),
-        'West': PanelConfig(n=18, azimuth=210, inclination=5),
+        'East': PanelConfig(n=18, azimuth=90, inclination=5),
+        'West': PanelConfig(n=18, azimuth=270, inclination=5),
     }
 
     # Extract the named index and selected columns into a new DataFrame
@@ -147,7 +149,8 @@ def main():
     # Least sq . for temperature, west and east irrad.
     # We want to get model that is independent of angle, so it must be:
     # total = (X_w  + X_e) @ beta
-    base = [(0,0), (1,0), (0,1), (1,1), (2, 0), (0, 2), (2, 1), (1, 2), (2, 2), (3, 0), (0, 3)]
+    #base = [(0,0), (1,0), (0,1), (1,1), (2, 0), (0, 2), (2, 1), (1, 2), (2, 2), (3, 0), (0, 3)]
+    base = [(1,0)]
     func_we = fit_mod.least_squares_fit((irr_e, irr_w), temp_out, kadlec_dc, base)
     dc_mod_we = func_we((irr_e, irr_w), temp_out)
     fit_mod.plot_2d_data(irr_e, temp_out, kadlec_dc - dc_mod_we)
@@ -156,7 +159,7 @@ def main():
     func_file = workdir / "dc_approx"
     with open(func_file, 'wb') as f:
         pickle.dump(func_we, f)
-    model_df['pv_energy_DC'] = dc_mod_we
+    model_df['pv_energy_DC'] = 7.7929 * (irr_e + irr_w)
     cmp_df = concat_columns(df, model_df, ['irr_global_pv', 'pv_energy_DC'], 'date_time')
     fve_plots(workdir, model_df, units, "JB_fix_", cols_out)
     zoom_plot_df(cmp_df)
@@ -164,8 +167,8 @@ def main():
 
 
 def operation_cfg(**kw_args):
-    bat_cap = kw_args.get('bat_cap', 14.33)
-    eff_cap = kw_args.get('bat_eff_cap', 13.5)
+    bat_cap = kw_args.get('bat_cap', 3 * 14.33)
+    eff_cap = kw_args.get('bat_eff_cap', 0.8*bat_cap)
     slack = (bat_cap - eff_cap) / 2 / bat_cap
     op_cfg=dict(
         year_consumption=11200,
@@ -182,7 +185,7 @@ def operation_cfg(**kw_args):
         distr_buy_fee=0.5445,       # [Kč/kWh] (s DPH) buy distribution fee per kWh
         distr_per_day=5.05,         # [Kč / day] s DPH, : float  # distribution fee per day
         eur_to_czk=25,              #  exchange rate
-        sell_limit=10,               # [kWh / h] maximum amount of kWh that can be sold in a single hour
+        sell_limit=20,               # [kWh / h] maximum amount of kWh that can be sold in a single hour
         heating_mean_period=2 * 24
         # buy_price_limit=: float  # maximum amount of kWh that can be bought in a single hour
     )
@@ -211,6 +214,7 @@ def get_input_df():
     #pd.concat([df_spot, interpolated_weather], axis=1)
 
     #print("Total consumption:", np.sum(input_df['consumption']))
+    input_df['DNI'] = input_df['DNI'] / 1000 # kW/m2
     input_df['GHI'] = (input_df['Ibeam'] + input_df['Idiff']) / 1000 # kW/m2
     input_df['DHI'] = (input_df['Idiff']) / 1000 # kW/m2
     input_df.reset_index(inplace=True)
@@ -230,7 +234,7 @@ def simulate(workdir, input_df, spot_df, panel_groups, op_cfg: OperationCfg, plo
     # 2. interpolate to common times
     # interpolate to common times
 
-    spot_df.set_index('date_time', inplace=True)
+    spot_df = spot_df.set_index('date_time')
     spot_df.index = pd.to_datetime(spot_df.index)
     interpolated_model = model_df\
         .reindex(model_df.index.union(spot_df.index))\
@@ -274,18 +278,19 @@ def simulate(workdir, input_df, spot_df, panel_groups, op_cfg: OperationCfg, plo
     irr_w = np.array(model_df['irr_eff_w'])
     irr_e = np.array(model_df['irr_eff_e'])
     temp_out = np.array(model_df['temp_out'])
-    dc_mod_we = func_we((irr_e, irr_w), temp_out)
+    #dc_mod_we = func_we((irr_e, irr_w), temp_out)
+    dc_mod_we = 7.7929 * (irr_e + irr_w) * 1.5 * op_cfg.conv_eff
     model_df['pv_energy_DC'] = np.maximum(0.0, dc_mod_we)
 
-    peak = np.percentile(model_df['pv_energy_DC'], 98)    # cut possible outlayers
-    factor = op_cfg.peak_power / (op_cfg.conv_eff * peak)
-    model_df['pv_energy_DC'] = factor * model_df['pv_energy_DC']
+    #peak = np.percentile(model_df['pv_energy_DC'], 98)    # cut possible outlayers
+    #factor = op_cfg.peak_power / (op_cfg.conv_eff * peak)
+    #model_df['pv_energy_DC'] = factor * model_df['pv_energy_DC']
     #operation_df = model_operation(model_df, op_cfg)
     operation_df = model_operation_lp(model_df, op_cfg)
 
 
     operation_df.to_csv(workdir / "opt_model_df_2023.csv")
-    operation_df.idex = pd.to_datetime(operation_df.index)
+    operation_df.index = pd.to_datetime(operation_df.index)
     #cols_out = {'price':'sum', 'consumption':'sum', 'ghi':'sum', 'dhi':'sum', 'irr_global_pv':'sum', 'irr_eff':'sum', 'pv_energy_DC':'sum'}
     cols_out = {'price':'sum', 'consumption':'sum', 'pv_energy_DC':'sum', 'sell':'sum', 'irr_global_pv':'sum', 'revenue':'sum', 'bat_energy':['min', 'max']}
     plot_df = fve_plots(workdir, operation_df, {}, "opt_", cols_out)
@@ -340,28 +345,27 @@ def append_with_alignment(df, file_path):
 
 
 def optimize():
-    input_df = get_input_df()
+    input_df, spot_df = get_input_df()
     cases = []
     # params = itertools.chain(
     #     itertools.product([True, False], [90,  110, 130,  140, 160, 180], [5, 15, 35, 50], [210], [5]),
     #     #itertools.product([True, False], [120], [50], [180, 190, 200, 210], [5, 10, 20, 30, 40, 50])
     # )
     params = itertools.chain(
-        itertools.product([True, False], [110], [50], [130, 150, 170, 190,  210], [5, 15, 35, 50])
+        itertools.product([90, 110, 130, 150, 170, 190,  210, 230], [5, 20, 35, 50, 65])
     )
-    for bat, az1, tl1, az2, tl2 in params:
+    for az, tl in params:
 
-        case_dir = workdir / f"case_{az1}_{tl1}_{az2}_{tl2}_{bat}"
+        case_dir = workdir / f"case_{az}_{tl}"
         if not case_dir.exists():
             case_dir.mkdir()
         shutil.copyfile(workdir / "dc_approx", case_dir / "dc_approx")
         print(case_dir)
         panel_groups = {
-            'East': PanelConfig(n=18, azimuth=az1, inclination=tl1),
-            'West': PanelConfig(n=18, azimuth=az2, inclination=tl2),
+            'East': PanelConfig(n=18, azimuth=az, inclination=tl),
+            'West': PanelConfig(n=18, azimuth=az, inclination=tl),
         }
-        case_dir = workdir / f"case_{az1}_{tl1}_{az2}_{tl2}_{bat}"
-        op_df = simulate(case_dir, input_df, panel_groups, operation_cfg(), plot=False)
+        op_df = simulate(case_dir, input_df, spot_df, panel_groups, operation_cfg(), plot=False)
         revenue_sum = op_df['revenue'].sum()
         peak_power = op_df['pv_energy_DC'].max() * 0.95
         total_dc = op_df['pv_energy_DC'].sum()
@@ -372,13 +376,72 @@ def optimize():
         print("  Peak:", peak_power)
         print("  Revenue: ", revenue_sum)
 
-        cases.append(((revenue_sum, peak_power, total_dc, total_irr, total_buy, total_sell, bat, az1, tl1, az2, tl2)))
+        cases.append(((revenue_sum, peak_power, total_dc, total_irr, total_buy, total_sell, az, tl)))
     cases.sort(reverse=True)
-    cases_df = pd.DataFrame(cases, columns=['revenue', 'peak_power', 'total_dc', 'total_irr', 'total_buy', 'total_sell', 'bat', 'az1', 'tl1', 'az2', 'tl2'])
+    cases_df = pd.DataFrame(cases, columns=['revenue', 'peak_power', 'total_dc', 'total_irr', 'total_buy', 'total_sell', 'az', 'tl'])
     # Append to CSV with aligned spaces
     append_with_alignment(cases_df, workdir / "cases.csv")
 
+
+#
+#
+#
+#
+#
+# # create a helper function to do the transposition for us
+# def calculate_poa(tmy, solar_position, surface_tilt, surface_azimuth):
+#     # Use the get_total_irradiance function to transpose the irradiance
+#     # components to POA irradiance
+#     poa = irradiance.get_total_irradiance(
+#         surface_tilt=surface_tilt,
+#         surface_azimuth=surface_azimuth,
+#         dni=tmy['dni'],
+#         ghi=tmy['ghi'],
+#         dhi=tmy['dhi'],
+#         solar_zenith=solar_position['apparent_zenith'],
+#         solar_azimuth=solar_position['azimuth'],
+#         model='isotropic')
+#     dt = pd.Series(poa.index)
+#     poa.reset_index(inplace=True)
+#     poa['date_time'] = dt
+#     return poa  # just return the total in-plane irradiance
+#
+# def irrad_study():
+#
+#
+#     input_df, spot_df = get_input_df()
+#     cases = []
+#     # params = itertools.chain(
+#     #     itertools.product([True, False], [90,  110, 130,  140, 160, 180], [5, 15, 35, 50], [210], [5]),
+#     #     #itertools.product([True, False], [120], [50], [180, 190, 200, 210], [5, 10, 20, 30, 40, 50])
+#     # )
+#     params = itertools.product([130, 150, 170, 190, 210, 230, 250], [40, 50, 60])
+#
+#     #  itertools.product([90, 110, 130, 150, 170, 190,  210], [40])
+#     for az, tl in params:
+#         case_dir = workdir / f"case_{az}_{tl}"
+#         if not case_dir.exists():
+#             case_dir.mkdir()
+#         shutil.copyfile(workdir / "dc_approx", case_dir / "dc_approx")
+#         print(case_dir)
+#         panel_groups = {
+#             'East': PanelConfig(n=18, azimuth=az, inclination=tl),
+#             'West': PanelConfig(n=18, azimuth=az, inclination=tl),
+#         }
+#         model_df = pvlib_model.pv_model_simple(panel_groups, input_df, horizon=True)
+#         #  model_df = calculate_poa(tmy, solar_position, tl, az)
+#         model_df['azimuth'] = az
+#         model_df['tilt'] = tl
+#         df = model_df.reset_index()
+#         cases.append(df)
+#     cases_df = pd.concat(cases)
+#     #cols_out = ['date_time', 'azimuth', 'tilt', 'ghi', 'dni', 'irr_global_pv', 'poa_global_East']
+#     cols_out = ['date_time', 'azimuth', 'tilt', 'poa_global']
+#     month_plot(workdir, cases_df[cols_out], "irr_study_")
+
+
 if __name__ == "__main__":
     #main()
-    single_run()
-    #optimize()
+    #single_run()
+    optimize()
+    #irrad_study()

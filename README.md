@@ -1,5 +1,26 @@
 # FVE Vizovická - modely
 
+Optimalizace varianty:
+optim_2_sell_1_2bat_15kWp (range 4%)
+32258.02793194429  19.057646455139295 26523.342579182343 987.0830701327915  -8251.20894983918  20641.478380197907 90.0 65.0
+31082.072617472044 19.078671938856896 25577.347535507248 1162.468764762093  -8297.927014035806 19915.804644051135 90.0 5.0
+
+optim_2_sell_0.5_1bat_20kWp (range 3%)
+37516.74529806735  25.410195273519058 35364.45677224312  987.0830701327915  -5636.525572543718  23234.589318996874 90.0 65.0
+36467.487455002716 25.438229251809194 34103.130047343    1162.468764762093  -5602.871717110485  22466.88330223624  90.0 5.0
+
+optim_2_sell_1_1bat_20kWp (range 4%)
+42091.786500083486 25.410195273519058 35364.45677224312  987.0830701327915  -6046.809106852799 26034.368773467566 90.0 65.0
+40665.469828361776 25.40861628270367  34135.833853854776 1155.6110334173356 -6020.40549197693  25059.9103478401   190.0 15.0
+
+optim_2_sell_1_2bat_20kWp (range 3%)
+47395.103522441525 25.410195273519058 35364.45677224312  987.0830701327915  -8003.796053337532 28113.730391894656 90.0 65.0
+45910.33038068461  25.438229251809194 34103.130047343    1162.468764762093  -7989.51600412884  27094.546062423586 90.0 5.0
+
+optim_2_sell_0.5_2bat_20kWp (range 3%)
+42980.20567370341  25.410195273519058 35364.45677224312  987.0830701327915  -7142.9461867474165 25483.695462704403 90.0 65.0
+41798.953725392654 25.438229251809194 34103.130047343    1162.468764762093  -7121.823380434242  24640.15406740374  90.0 5.0
+
 Model summary:
 - FVE production model using pvlib, when compared to Kadlec model using its GHI and DHI the 
   DC production was overestimated; could not determine the reason, but able to construct a 
@@ -24,9 +45,10 @@ Model summary:
   But that could be result of poor sell model.
 - Dayly curves of production and irradiation especially for the east orientations exhibit a morning peaks. These seems to be already in the 
   pvGIS data. Not sure if these are real. That could also affect the optimization results.
-
+- LP solver applied to find optimal control, no integer programming necessary
+- 
 TODO:
-- tray to make optimization more robust in order to optimize for different years, models
+- try to make optimization more robust in order to optimize for different years, models
   1. parametrize optimization be model setting
   2. three stage optimization : 
         1. compute for all pannels in same direction, tilt with large step
@@ -38,7 +60,6 @@ TODO:
 
 - better battery management model:
   - collect all days togehter with starting battery state for different pannel setting and different years
-  - use indeger control programming to optimize
   - train NN model to predict sell for next hour using production and price prediciton (noised) and current state 
 notes:
 podmínky prodeje / připojení
